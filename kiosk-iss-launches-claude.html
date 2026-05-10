@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>SPACE MONITOR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@100;300;400&display=swap" rel="stylesheet">
+<style>
+/* ─── RESET ─────────────────────────────────── */
+*, *::before, *::after {
+  margin: 0; padding: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+:root {
+  --white: #ffffff;
+  --dim1: rgba(255,255,255,0.55);
+  --dim2: rgba(255,255,255,0.25);
+  --dim3: rgba(255,255,255,0.08);
+  --dim4: rgba(255,255,255,0.04);
+  --font: 'IBM Plex Mono', 'Courier New', monospace;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur: 0.9s;
+}
+
+html, body {
+  width: 100%; height: 100%;
+  background: #000;
+  color: var(--white);
+  font-family: var(--font);
+  overflow: hidden;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── LAYOUT ─────────────────────────────────── */
+#app {
+  width: 100%; height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.section {
+  overflow: hidden;
+  position: relative;
+  cursor: pointer;
+  transition: flex-grow var(--dur) var(--ease);
+  flex-basis: 0;
+  flex-shrink: 0;
+}
+.section.expanded  { flex-grow: 70; }
+.section.collapsed { flex-grow: 15; border-top: 1px solid var(--dim3); }
+
+/* ─── COLLAPSED BAR ─────────────────────────── */
+.cb {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+  gap: 10px;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+.section.expanded .cb { opacity: 0; }
+
+.cb-tag {
+  font-size: 0.48rem;
+  font-weight: 400;
+  letter-spacing: 0.22em;
+  color: var(--dim2);
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+.cb-val {
+  font-size: 0.78rem;
+  font-weight: 300;
+  color: var(--dim1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─── EXPANDED CONTENT ──────────────────────── */
+.exp {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.45s ease 0.25s;
+}
+.section.expanded .exp {
+  opacity: 1;
+  pointer-events: all;
+}
+
+/* ─── CLOCK ─────────────────────────────────── */
+#clock-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  gap: 14px;
+}
+
+#clock-hms {
+  font-size: clamp(4rem, 17vw, 7.5rem);
+  font-weight: 100;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+#clock-dmy {
+  font-size: clamp(0.58rem, 2.2vw, 0.8rem);
+  font-weight: 400;
+  letter-spacing: 0.3em;
+  color: var(--dim2);
+  text-transform: uppercase;
+}
+
+/* ─── ISS ────────────────────────────────────── */
+#globe-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+#globe-wrap canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+#iss-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  flex-shrink: 0;
+  border-top: 1px solid var(--dim3);
+}
+
+.iss-cell {
+  padding: 9px 14px;
+  border-right: 1px solid var(--dim3);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.iss-cell:nth-child(even) { border-right: none; }
+.iss-cell.span2 { grid-column: span 2; border-top: 1px solid var(--dim3); border-right: none; }
+
+.cell-label {
+  font-size: 0.45rem;
+  font-weight: 400;
+  letter-spacing: 0.2em;
+  color: var(--dim2);
+  text-transform: uppercase;
+}
+.cell-val {
+  font-size: 0.78rem;
+  font-weight: 300;
+}
+
+/* ─── LAUNCHES ───────────────────────────────── */
+#launches-hdr {
+  flex-shrink: 0;
+  padding: 10px 18px 8px;
+  font-size: 0.46rem;
+  font-weight: 400;
+  letter-spacing: 0.22em;
+  color: var(--dim2);
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--dim3);
+}
+
+#launches-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.l-item {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--dim4);
+  overflow: hidden;
+  flex-basis: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: flex-grow 0.55s var(--ease), background 0.4s ease;
+}
+.l-item.hl { flex-grow: 4; background: var(--dim4); }
+.l-item.nm { flex-grow: 1; }
+
+.l-name {
+  font-size: 0.72rem;
+  font-weight: 300;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.l-item.hl .l-name { white-space: normal; font-size: 0.9rem; }
+
+.l-provider {
+  font-size: 0.52rem;
+  font-weight: 400;
+  color: var(--dim2);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.l-countdown {
+  font-size: 1.05rem;
+  font-weight: 100;
+  margin-top: 8px;
+  letter-spacing: 0.02em;
+  display: none;
+  font-variant-numeric: tabular-nums;
+}
+.l-item.hl .l-countdown { display: block; }
+
+.l-detail {
+  display: none;
+  margin-top: 6px;
+  font-size: 0.55rem;
+  font-weight: 400;
+  color: var(--dim2);
+  line-height: 1.6;
+}
+.l-item.hl .l-detail { display: block; }
+
+.l-status {
+  display: inline-block;
+  border: 1px solid var(--dim2);
+  padding: 1px 7px;
+  font-size: 0.45rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-top: 5px;
+}
+.l-status.go { border-color: var(--dim1); color: var(--white); }
+
+/* ─── PROGRESS BAR ───────────────────────────── */
+#pgbar {
+  position: fixed;
+  bottom: 0; left: 0;
+  height: 1px;
+  background: var(--dim2);
+  width: 0;
+  z-index: 200;
+}
+
+/* ─── UTILS ──────────────────────────────────── */
+@keyframes blink { 0%,100%{opacity:.25} 50%{opacity:.55} }
+.loading { animation: blink 1.6s ease-in-out infinite; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ════════════ CLOCK ════════════ -->
+  <div class="section expanded" id="s-clock">
+    <div class="cb">
+      <span class="cb-tag">UTC</span>
+      <span class="cb-val" id="cb-clock">──:──</span>
+    </div>
+    <div class="exp">
+      <div id="clock-body">
+        <div id="clock-hms">──:──:──</div>
+        <div id="clock-dmy">───────────────</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════ ISS ════════════ -->
+  <div class="section collapsed" id="s-iss">
+    <div class="cb">
+      <span class="cb-tag">ISS</span>
+      <span class="cb-val" id="cb-iss">ACQUIRING…</span>
+    </div>
+    <div class="exp">
+      <div id="globe-wrap"></div>
+      <div id="iss-grid">
+        <div class="iss-cell">
+          <span class="cell-label">Latitude</span>
+          <span class="cell-val loading" id="iss-lat">───</span>
+        </div>
+        <div class="iss-cell">
+          <span class="cell-label">Longitude</span>
+          <span class="cell-val loading" id="iss-lon">───</span>
+        </div>
+        <div class="iss-cell">
+          <span class="cell-label">Altitude</span>
+          <span class="cell-val loading" id="iss-alt">───</span>
+        </div>
+        <div class="iss-cell">
+          <span class="cell-label">Velocity</span>
+          <span class="cell-val loading" id="iss-vel">───</span>
+        </div>
+        <div class="iss-cell span2">
+          <span class="cell-label">Next Pass Over Your Location</span>
+          <span class="cell-val loading" id="iss-pass">Waiting for location…</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════ LAUNCHES ════════════ -->
+  <div class="section collapsed" id="s-launches">
+    <div class="cb">
+      <span class="cb-tag">NEXT</span>
+      <span class="cb-val loading" id="cb-launch">LOADING…</span>
+    </div>
+    <div class="exp">
+      <div id="launches-hdr">UPCOMING LAUNCHES</div>
+      <div id="launches-list">
+        <div style="flex:1;display:flex;align-items:center;padding:18px;
+                    color:rgba(255,255,255,.25);font-size:.75rem" class="loading">
+          Fetching manifest…
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+<div id="pgbar"></div>
+
+<!-- ─── Three.js r128 ──────────────────────── -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- ─── satellite.js 4.1.4 ─────────────────── -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/4.1.4/satellite.min.js"
+        onerror="window.satellite=null"></script>
+
+<script>
+'use strict';
+
+/* ══════════════════════════════════════════════
+   CONSTANTS
+══════════════════════════════════════════════ */
+const CYCLE_MS        = 30_000;
+const LAUNCH_CYCLE_MS = 8_000;
+const ISS_POLL_MS     = 5_000;
+const TLE_POLL_MS     = 600_000;
+const LAUNCH_POLL_MS  = 300_000;
+const TRACK_PAST_MIN  = 15;
+const TRACK_FUT_MIN   = 92;
+const PASS_STEP_S     = 30;
+const PASS_HOURS      = 24;
+const MIN_EL_DEG      = 5;
+
+/* ══════════════════════════════════════════════
+   STATE
+══════════════════════════════════════════════ */
+let curSec  = 0;          // 0=clock 1=iss 2=launches
+let cycleId = null;
+let pgStart = null;
+
+const hasSat = typeof satellite !== 'undefined' && satellite !== null;
+
+// ISS
+let tleData  = null;
+let userLat  = null;
+let userLon  = null;
+let passes   = [];
+
+// Globe
+let globeInit  = false;
+let rendering  = false;
+let scene, camera, renderer, earthGroup;
+let issMarker, userRing, futureLine, pastLine;
+let tgtRY = 0, tgtRX = 0, curRY = 0, curRX = 0;
+
+// Launches
+let launches   = [];
+let hlIdx      = 0;
+let launchTmr  = null;
+
+/* ══════════════════════════════════════════════
+   CLOCK
+══════════════════════════════════════════════ */
+const DAYS   = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
+const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+
+function tickClock() {
+  const n = new Date();
+  const hh = pad(n.getUTCHours());
+  const mm = pad(n.getUTCMinutes());
+  const ss = pad(n.getUTCSeconds());
+  const lo = n.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',hour12:false});
+  setText('clock-hms', `${hh}:${mm}:${ss}`);
+  setText('clock-dmy',
+    `${DAYS[n.getDay()]}  ·  ${n.getDate()} ${MONTHS[n.getMonth()]} ${n.getFullYear()}  ·  UTC`);
+  setText('cb-clock', lo);
+}
+setInterval(tickClock, 1000);
+tickClock();
+
+/* ══════════════════════════════════════════════
+   THREE.JS GLOBE
+══════════════════════════════════════════════ */
+function ll2v(lat, lon, r = 1) {
+  // lat=0,lon=0 → (+x). Camera at +z. lon=90 → +z (front).
+  const phi   = (90 - lat) * Math.PI / 180;
+  const theta = lon * Math.PI / 180;
+  return new THREE.Vector3(
+     r * Math.sin(phi) * Math.cos(theta),
+     r * Math.cos(phi),
+     r * Math.sin(phi) * Math.sin(theta)
+  );
+}
+
+function makeLine(pts, opacity) {
+  const g = new THREE.BufferGeometry().setFromPoints(pts);
+  const m = new THREE.LineBasicMaterial({ color: 0xffffff, opacity, transparent: true });
+  return new THREE.Line(g, m);
+}
+
+function makeLatCircle(lat, r, op) {
+  const pts = [];
+  for (let lo = 0; lo <= 362; lo += 3) pts.push(ll2v(lat, lo, r));
+  return makeLine(pts, op);
+}
+
+function makeLonCircle(lon, r, op) {
+  const pts = [];
+  for (let la = -90; la <= 90; la += 3) pts.push(ll2v(la, lon, r));
+  return makeLine(pts, op);
+}
+
+function initGlobe() {
+  if (globeInit) return;
+  globeInit = true;
+
+  const wrap = document.getElementById('globe-wrap');
+  const W = wrap.clientWidth  || 360;
+  const H = wrap.clientHeight || 300;
+
+  scene    = new THREE.Scene();
+  camera   = new THREE.PerspectiveCamera(36, W / H, 0.1, 100);
+  camera.position.z = 2.85;
+
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(W, H);
+  renderer.setClearColor(0x000000, 0);
+  wrap.appendChild(renderer.domElement);
+
+  earthGroup = new THREE.Group();
+  scene.add(earthGroup);
+
+  // Earth sphere
+  const earthMat = new THREE.MeshBasicMaterial({ color: 0x030303 });
+  earthGroup.add(new THREE.Mesh(
+    new THREE.SphereGeometry(1, 64, 32),
+    earthMat
+  ));
+
+  // Carica la texture della mappa scura per mantenere lo stile sci-fi
+  new THREE.TextureLoader().load('https://unpkg.com/three-globe/example/img/earth-dark.jpg', (tex) => {
+    earthMat.color.setHex(0xaaaaaa); // Tinta leggermente più scura per non accecare
+    earthMat.map = tex;
+    earthMat.needsUpdate = true;
+  });
+
+  // Latitude lines (every 30°, equator brighter)
+  for (let la = -60; la <= 60; la += 30) {
+    earthGroup.add(makeLatCircle(la, 1.002, la === 0 ? 0.20 : 0.09));
+  }
+  // Longitude lines (every 30°)
+  for (let lo = 0; lo < 360; lo += 30) {
+    earthGroup.add(makeLonCircle(lo, 1.002, 0.09));
+  }
+
+  // Ground tracks (empty geometry, filled later)
+  futureLine = makeLine([], 0.65);
+  pastLine   = makeLine([], 0.20);
+  earthGroup.add(futureLine, pastLine);
+
+  // ISS marker — white sphere
+  issMarker = new THREE.Mesh(
+    new THREE.SphereGeometry(0.028, 10, 10),
+    new THREE.MeshBasicMaterial({ color: 0xffffff })
+  );
+  earthGroup.add(issMarker);
+
+  // User location — white ring
+  userRing = new THREE.Mesh(
+    new THREE.TorusGeometry(0.030, 0.007, 6, 28),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.50, transparent: true })
+  );
+  userRing.visible = false;
+  earthGroup.add(userRing);
+
+  // ResizeObserver for orientation changes
+  new ResizeObserver(() => {
+    if (!renderer) return;
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }).observe(wrap);
+
+  startRender();
+}
+
+function startRender() {
+  if (rendering) return;
+  rendering = true;
+  drawFrame();
+}
+function stopRender() { rendering = false; }
+
+function drawFrame() {
+  if (!rendering) return;
+  requestAnimationFrame(drawFrame);
+  const f = 0.022;
+  curRY += (tgtRY - curRY) * f;
+  curRX += (tgtRX - curRX) * f;
+  earthGroup.rotation.y = curRY;
+  earthGroup.rotation.x = curRX;
+  renderer.render(scene, camera);
+}
+
+function placeISS(lat, lon) {
+  if (!globeInit || !issMarker) return;
+  const v = ll2v(lat, lon, 1.055);
+  issMarker.position.copy(v);
+  // Rotate globe so ISS faces camera (camera is at +z, lon=90 is +z in our mapping)
+  tgtRY = -(lon - 90) * Math.PI / 180;
+  tgtRX =  (lat)      * Math.PI / 180 * 0.40;
+}
+
+function setTrack(futPts, pstPts) {
+  if (!globeInit) return;
+  if (futPts?.length > 1) {
+    futureLine.geometry.setFromPoints(futPts.map(p => ll2v(p.la, p.lo, 1.018)));
+    futureLine.geometry.computeBoundingSphere();
+  }
+  if (pstPts?.length > 1) {
+    pastLine.geometry.setFromPoints(pstPts.map(p => ll2v(p.la, p.lo, 1.013)));
+    pastLine.geometry.computeBoundingSphere();
+  }
+}
+
+function placeUser(lat, lon) {
+  if (!globeInit || !userRing) return;
+  const v = ll2v(lat, lon, 1.035);
+  userRing.position.copy(v);
+  userRing.lookAt(v.clone().multiplyScalar(3));
+  userRing.visible = true;
+}
+
+/* ══════════════════════════════════════════════
+   ISS DATA
+══════════════════════════════════════════════ */
+async function fetchISS() {
+  try {
+    const r = await fetch('https://api.wheretheiss.at/v1/satellites/25544');
+    if (!r.ok) throw 0;
+    const d = await r.json();
+
+    const la = d.latitude,  lo = d.longitude;
+    const laS = fmtDeg(la, 'N', 'S');
+    const loS = fmtDeg(lo, 'E', 'W');
+
+    setVal('iss-lat', laS);
+    setVal('iss-lon', loS);
+    setVal('iss-alt', `${d.altitude.toFixed(1)} km`);
+    setVal('iss-vel', `${d.velocity.toFixed(0)} km/h`);
+    setText('cb-iss', `${laS}  ${loS}`);
+    rmLoading('cb-iss');
+
+    placeISS(la, lo);
+  } catch { /* silent */ }
+}
+
+async function fetchTLE() {
+  try {
+    const r = await fetch('https://api.wheretheiss.at/v1/satellites/25544/tles?format=json');
+    if (!r.ok) throw 0;
+    tleData = await r.json();
+    computeOrbit();
+  } catch { /* silent */ }
+}
+
+function computeOrbit() {
+  if (!tleData || !hasSat) return;
+  try {
+    const satrec = satellite.twoline2satrec(tleData.line1, tleData.line2);
+    const now    = Date.now();
+    const futPts = [], pstPts = [];
+
+    for (let t = -TRACK_PAST_MIN; t <= TRACK_FUT_MIN; t++) {
+      const time = new Date(now + t * 60_000);
+      const pv   = satellite.propagate(satrec, time);
+      if (!pv?.position) continue;
+      const gmst = satellite.gstime(time);
+      const geo  = satellite.eciToGeodetic(pv.position, gmst);
+      const pt   = { la: satellite.degreesLat(geo.latitude),
+                     lo: satellite.degreesLong(geo.longitude) };
+      (t <= 0 ? pstPts : futPts).push(pt);
+    }
+
+    setTrack(futPts, pstPts);
+
+    if (userLat !== null) calcPasses(satrec);
+  } catch (e) { console.warn('orbit:', e); }
+}
+
+/* Elevation of satellite above observer's horizon (degrees) */
+function elevDeg(sLa, sLo, sAlt, oLa, oLo) {
+  const R   = 6371;
+  const sR  = R + sAlt;
+  const r   = d => d * Math.PI / 180;
+  const [sl, so, ol, oo] = [r(sLa), r(sLo), r(oLa), r(oLo)];
+  const sx = sR*Math.cos(sl)*Math.cos(so), sy = sR*Math.cos(sl)*Math.sin(so), sz = sR*Math.sin(sl);
+  const ox = R *Math.cos(ol)*Math.cos(oo), oy = R *Math.cos(ol)*Math.sin(oo), oz = R *Math.sin(ol);
+  const dx = sx-ox, dy = sy-oy, dz = sz-oz;
+  const d  = Math.sqrt(dx*dx+dy*dy+dz*dz);
+  const dot = dx*(ox/R)+dy*(oy/R)+dz*(oz/R);
+  return Math.asin(dot/d) * 180 / Math.PI;
+}
+
+function calcPasses(satrec) {
+  const now  = Date.now();
+  const found = [];
+  let inP = false, pStart = 0, pMaxEl = 0;
+
+  const steps = (PASS_HOURS * 3600) / PASS_STEP_S;
+  for (let i = 0; i < steps; i++) {
+    const time = new Date(now + i * PASS_STEP_S * 1000);
+    const pv   = satellite.propagate(satrec, time);
+    if (!pv?.position) continue;
+    const gmst = satellite.gstime(time);
+    const geo  = satellite.eciToGeodetic(pv.position, gmst);
+    const el   = elevDeg(
+      satellite.degreesLat(geo.latitude),
+      satellite.degreesLong(geo.longitude),
+      geo.height, userLat, userLon
+    );
+
+    if (el > MIN_EL_DEG) {
+      if (!inP) { inP = true; pStart = time; pMaxEl = el; }
+      else pMaxEl = Math.max(pMaxEl, el);
+    } else if (inP) {
+      inP = false;
+      found.push({ start: pStart, maxEl: pMaxEl });
+      if (found.length >= 3) break;
+    }
+  }
+
+  passes = found;
+  renderPass();
+}
+
+function renderPass() {
+  const el = document.getElementById('iss-pass');
+  if (!el) return;
+
+  if (!hasSat) {
+    setVal('iss-pass', 'satellite.js unavailable — pass predictions offline');
+    return;
+  }
+  if (userLat === null) {
+    setVal('iss-pass', 'Waiting for location permission…');
+    return;
+  }
+  if (!passes.length) {
+    setVal('iss-pass', 'No visible pass in next 24h');
+    return;
+  }
+
+  const p    = passes[0];
+  const diff = p.start - new Date();
+  let ts;
+  if (diff < 0)          ts = 'OVERHEAD NOW';
+  else {
+    const h = Math.floor(diff / 3_600_000);
+    const m = Math.floor(diff % 3_600_000 / 60_000);
+    ts = h > 0 ? `in ${h}h ${m}m` : `in ${m}m`;
+  }
+  setVal('iss-pass', `${ts}  ·  max elevation ${p.maxEl.toFixed(0)}°`);
+}
+
+setInterval(renderPass, 60_000);
+
+/* ══════════════════════════════════════════════
+   GEOLOCATION
+══════════════════════════════════════════════ */
+function askGeo() {
+  if (!navigator.geolocation || userLat !== null) return;
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      userLat = pos.coords.latitude;
+      userLon = pos.coords.longitude;
+      placeUser(userLat, userLon);
+      if (tleData && hasSat) {
+        calcPasses(satellite.twoline2satrec(tleData.line1, tleData.line2));
+      } else {
+        setVal('iss-pass', 'Location acquired — waiting for orbital data…');
+      }
+    },
+    () => setVal('iss-pass', 'Location permission denied')
+  );
+}
+
+/* ══════════════════════════════════════════════
+   LAUNCHES
+══════════════════════════════════════════════ */
+async function fetchLaunches() {
+  try {
+    const r = await fetch(
+      'https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=5&format=json'
+    );
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    launches = d.results || [];
+    hlIdx = 0;
+    buildLaunchList();
+
+    if (launches.length) {
+      const name = launches[0].name.split('|')[0].trim();
+      setText('cb-launch', name.substring(0, 22));
+      rmLoading('cb-launch');
+    }
+  } catch (e) {
+    document.getElementById('launches-list').innerHTML =
+      `<div style="flex:1;display:flex;align-items:center;padding:18px;
+        color:rgba(255,255,255,.25);font-size:.72rem;line-height:1.6">
+        Launch manifest unavailable.<br>
+        API rate limit reached — try again later.
+      </div>`;
+  }
+}
+
+function cdStr(net) {
+  const diff = new Date(net) - Date.now();
+  if (diff <= 0) return 'LAUNCHED';
+  const d = Math.floor(diff / 86_400_000);
+  const h = Math.floor(diff % 86_400_000 / 3_600_000);
+  const m = Math.floor(diff % 3_600_000  / 60_000);
+  const s = Math.floor(diff % 60_000     / 1_000);
+  if (d > 0) return `T− ${d}d ${h}h ${m}m`;
+  if (h > 0) return `T− ${h}h ${m}m ${s}s`;
+  return `T− ${m}m ${s}s`;
+}
+
+function buildLaunchList() {
+  const list = document.getElementById('launches-list');
+  if (!launches.length) return;
+  list.innerHTML = '';
+
+  launches.forEach((l, i) => {
+    const parts    = (l.name || '').split('|');
+    const mission  = parts[0]?.trim() || '—';
+    const rocket   = parts[1]?.trim() || '';
+    const provider = l.launch_service_provider?.abbrev
+                  || l.launch_service_provider?.name || '';
+    const site     = l.pad?.location?.name || l.pad?.name || '';
+    const status   = l.status?.abbrev || 'TBD';
+    const isGo     = l.status?.id === 1;
+    const hl       = i === hlIdx;
+
+    const div = document.createElement('div');
+    div.className = `l-item ${hl ? 'hl' : 'nm'}`;
+    div.innerHTML = `
+      <div class="l-name">${mission}</div>
+      <div class="l-provider">${provider}${rocket ? ' · ' + rocket : ''}</div>
+      ${hl ? `<div class="l-countdown" id="cd-${i}">${cdStr(l.net)}</div>` : ''}
+      <div class="l-detail">
+        <div>${site || '—'}</div>
+        <span class="l-status ${isGo ? 'go' : ''}">${status}</span>
+      </div>`;
+    div.onclick = e => { e.stopPropagation(); hlIdx = i; buildLaunchList(); };
+    list.appendChild(div);
+  });
+}
+
+// Live countdowns
+setInterval(() => {
+  launches.forEach((l, i) => {
+    const el = document.getElementById(`cd-${i}`);
+    if (el) el.textContent = cdStr(l.net);
+  });
+}, 1000);
+
+function startLaunchCycle() {
+  if (launchTmr) clearInterval(launchTmr);
+  launchTmr = setInterval(() => {
+    if (curSec === 2 && launches.length > 1) {
+      hlIdx = (hlIdx + 1) % launches.length;
+      buildLaunchList();
+    }
+  }, LAUNCH_CYCLE_MS);
+}
+
+/* ══════════════════════════════════════════════
+   SECTION MACHINE
+══════════════════════════════════════════════ */
+const SEC_IDS = ['clock', 'iss', 'launches'];
+
+function goTo(idx) {
+  curSec = idx;
+  SEC_IDS.forEach((s, i) => {
+    document.getElementById(`s-${s}`)
+      .className = `section ${i === idx ? 'expanded' : 'collapsed'}`;
+  });
+
+  if (idx === 1) {
+    setTimeout(() => { initGlobe(); startRender(); askGeo(); }, 350);
+  } else if (globeInit) {
+    setTimeout(stopRender, 600);
+  }
+
+  resetCycle();
+}
+
+// Tap on a section: if already expanded → advance sub-item or go next
+// If collapsed → expand it
+function onSectionTap(idx) {
+  if (curSec !== idx) { goTo(idx); return; }
+  if (idx === 2 && launches.length > 1) {
+    hlIdx = (hlIdx + 1) % launches.length;
+    buildLaunchList();
+  } else {
+    goTo((idx + 1) % 3);
+  }
+}
+
+// Expose globally for onclick
+window.onSectionTap = onSectionTap;
+
+// Wire up taps (avoids inline onclick in HTML)
+document.getElementById('s-clock')
+  .addEventListener('click', () => onSectionTap(0));
+document.getElementById('s-iss')
+  .addEventListener('click', () => onSectionTap(1));
+document.getElementById('s-launches')
+  .addEventListener('click', () => onSectionTap(2));
+
+/* ══════════════════════════════════════════════
+   PROGRESS BAR + AUTO-CYCLE
+══════════════════════════════════════════════ */
+function resetCycle() {
+  pgStart = Date.now();
+  clearTimeout(cycleId);
+  cycleId = setTimeout(() => goTo((curSec + 1) % 3), CYCLE_MS);
+}
+
+(function animPg() {
+  if (pgStart) {
+    const p = Math.min(100, (Date.now() - pgStart) / CYCLE_MS * 100);
+    document.getElementById('pgbar').style.width = p + '%';
+  }
+  requestAnimationFrame(animPg);
+})();
+
+/* ══════════════════════════════════════════════
+   HELPERS
+══════════════════════════════════════════════ */
+function pad(n) { return String(n).padStart(2,'0'); }
+
+function fmtDeg(val, pos, neg) {
+  const dir = val >= 0 ? pos : neg;
+  return `${Math.abs(val).toFixed(2)}° ${dir}`;
+}
+
+function setText(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = v;
+}
+
+function setVal(id, v) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = v;
+  el.classList.remove('loading');
+}
+
+function rmLoading(id) {
+  document.getElementById(id)?.classList.remove('loading');
+}
+
+/* ══════════════════════════════════════════════
+   BOOT
+══════════════════════════════════════════════ */
+goTo(0);
+startLaunchCycle();
+
+fetchISS();
+fetchTLE();
+fetchLaunches();
+
+setInterval(fetchISS, ISS_POLL_MS);
+setInterval(fetchTLE, TLE_POLL_MS);
+setInterval(computeOrbit, 120_000);
+setInterval(fetchLaunches, LAUNCH_POLL_MS);
+</script>
+</body>
+</html>

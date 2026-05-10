@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Spaziale</title>
+    <!-- Font Minimal/Sci-Fi -->
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@300;500;700&display=swap" rel="stylesheet">
+    <!-- Librerie per calcoli orbitali e Globo 3D -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/4.1.3/satellite.min.js"></script>
+    <script src="https://unpkg.com/three"></script>
+    <script src="https://unpkg.com/globe.gl"></script>
+
+    <style>
+        :root {
+            --bg-color: #000000;
+            --text-color: #ffffff;
+            --dim-text: #888888;
+            --transition-speed: 1.2s; /* Velocità dell'animazione fluida */
+        }
+
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background-color: var(--bg-color); color: var(--text-color);
+            font-family: 'Rajdhani', sans-serif; overflow: hidden;
+        }
+
+        #dashboard {
+            position: relative; width: 100vw; height: 100vh;
+        }
+
+        /* Stile base dei pannelli */
+        .panel {
+            position: absolute;
+            background-color: transparent;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            box-sizing: border-box;
+            padding: 20px;
+            transition: all var(--transition-speed) cubic-bezier(0.25, 1, 0.5, 1);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Le 3 posizioni sullo schermo (Layout 16:9) */
+        .pos-main { top: 2%; left: 2%; width: 64%; height: 96%; }
+        .pos-side-top { top: 2%; left: 68%; width: 30%; height: 47%; }
+        .pos-side-bottom { top: 51%; left: 68%; width: 30%; height: 47%; }
+
+        /* Contenuti interni che scalano */
+        .panel-content { width: 100%; height: 100%; transition: transform var(--transition-speed); }
+        .pos-side-top .panel-content, .pos-side-bottom .panel-content { transform: scale(0.6); transform-origin: top left; }
+        .pos-main .panel-content { transform: scale(1); }
+
+        /* --- OROLOGIO --- */
+        #clock-time { font-size: 8rem; font-weight: 700; line-height: 1; margin-top: auto; }
+        #clock-date { font-size: 2.5rem; color: var(--dim-text); margin-bottom: auto; }
+
+        /* --- ISS --- */
+        #globe-container { width: 100%; flex-grow: 1; cursor: grab; }
+        .iss-stats { font-size: 1.2rem; display: flex; justify-content: space-between; margin-top: 10px; border-top: 1px solid var(--dim-text); padding-top: 10px;}
+        .alert-geo { color: #ffffff; font-weight: bold; font-size: 1.2rem; animation: pulse 2s infinite; display: none; }
+
+        /* --- LANCI --- */
+        .launch-item { margin-bottom: 20px; border-left: 2px solid white; padding-left: 10px; }
+        .launch-title { font-size: 1.5rem; font-weight: 700; }
+        .launch-agency { font-size: 1.1rem; color: var(--dim-text); }
+        .launch-countdown { font-size: 2.5rem; font-weight: 500; letter-spacing: 2px; }
+
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body>
+
+<div id="dashboard">
+    <!-- PANNELLO OROLOGIO -->
+    <div id="panel-clock" class="panel pos-main">
+        <div class="panel-content" style="display: flex; flex-direction: column; justify-content: center;">
+            <div id="clock-date">Caricamento...</div>
+            <div id="clock-time">00:00:00</div>
+            <div id="geo-status" style="margin-top:20px; color: var(--dim-text);">In attesa di posizione...</div>
+        </div>
+    </div>
+
+    <!-- PANNELLO ISS -->
+    <div id="panel-iss" class="panel pos-side-top">
+        <div class="panel-content" style="display: flex; flex-direction: column;">
+            <div style="font-size: 2rem; font-weight: bold; margin-bottom: 10px;">LIVELLO ISS</div>
+            <div id="globe-container"></div>
+            <div class="iss-stats">
+                <span id="iss-alt">Alt: -- km</span>
+                <span id="iss-vel">Vel: -- km/h</span>
+            </div>
+            <div id="iss-alert" class="alert-geo">ISS NEL TUO CIELO!</div>
+        </div>
+    </div>
+
+    <!-- PANNELLO LANCI -->
+    <div id="panel-launches" class="panel pos-side-bottom">
+        <div class="panel-content">
+            <div style="font-size: 2rem; font-weight: bold; margin-bottom: 20px;">PROSSIMI LANCI</div>
+            <div id="launches-container">
+                <div class="launch-item">Caricamento dati orbitali...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- 1. LOGICA DI ROTAZIONE SCHERMO (Ogni 20 secondi) ---
+    const panels = ['panel-clock', 'panel-iss', 'panel-launches'];
+    const positions = ['pos-main', 'pos-side-top', 'pos-side-bottom'];
+    let currentState = 0;
+
+    setInterval(() => {
+        currentState = (currentState + 1) % 3;
+        panels.forEach((panelId, index) => {
+            const posIndex = (index + currentState) % 3;
+            document.getElementById(panelId).className = `panel ${positions[posIndex]}`;
+        });
+        // Ridimensiona il globo 3D quando cambia il contenitore
+        setTimeout(() => { if(world) world.width(document.getElementById('globe-container').clientWidth).height(document.getElementById('globe-container').clientHeight); }, 1200);
+    }, 20000); // 20000 millisecondi = 20 secondi
+
+    // --- 2. OROLOGIO LOCALE ---
+    function updateClock() {
+        const now = new Date();
+        document.getElementById('clock-time').textContent = now.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        document.getElementById('clock-date').textContent = now.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase();
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // --- 3. GEOLOCALIZZAZIONE ---
+    let userLat = null, userLon = null;
+    navigator.geolocation.getCurrentPosition(
+        (pos) => {
+            userLat = pos.coords.latitude; userLon = pos.coords.longitude;
+            document.getElementById('geo-status').textContent = `Posizione Acquisita: ${userLat.toFixed(2)}°, ${userLon.toFixed(2)}°`;
+        },
+        (err) => { document.getElementById('geo-status').textContent = "Permesso posizione negato. Calcolo distanza ISS disabilitato."; }
+    );
+
+    // --- 4. GLOBO 3D MINIMALE & ISS MATH ---
+    let world;
+    let issSatrec;
+    const TLE_URL = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=tle';
+
+    // Inizializza il globo bianco e nero
+    function initGlobe() {
+        const container = document.getElementById('globe-container');
+        world = Globe()(container)
+            .backgroundColor('#000000')
+            .showAtmosphere(true)
+            .atmosphereColor('#ffffff')
+            .atmosphereAltitude(0.1)
+            .globeMaterial(new THREE.MeshBasicMaterial({ color: 0x000000 })) // Terra nera
+            .width(container.clientWidth)
+            .height(container.clientHeight);
+
+        // Carica i confini dei paesi in bianco
+        fetch('https://raw.githubusercontent.com/vasturiano/globe.gl/master/example/datasets/ne_110m_admin_0_countries.geojson')
+            .then(res => res.json())
+            .then(countries => {
+                world.polygonsData(countries.features)
+                    .polygonCapColor(() => '#000000')
+                    .polygonSideColor(() => '#000000')
+                    .polygonStrokeColor(() => '#ffffff');
+            });
+    }
+
+    // Calcola l'orbita futura (90 minuti)
+    function calcOrbitPath(satrec) {
+        const path = [];
+        const now = new Date();
+        for(let i=0; i<90; i+=3) { // punti ogni 3 minuti
+            const time = new Date(now.getTime() + i*60000);
+            const posVel = satellite.propagate(satrec, time);
+            const gmst = satellite.gstime(time);
+            const pos = satellite.eciToGeodetic(posVel.position, gmst);
+            path.push({ lat: satellite.degreesLat(pos.latitude), lng: satellite.degreesLong(pos.longitude) });
+        }
+        return path;
+    }
+
+    // Scarica TLE e avvia tracking ISS
+    async function fetchISSData() {
+        try {
+            const response = await fetch(TLE_URL);
+            const text = await response.text();
+            const lines = text.split('\n');
+            const tle1 = lines[1].trim(), tle2 = lines[2].trim(); // Dati della stazione ISS
+            issSatrec = satellite.twoline2satrec(tle1, tle2);
+            
+            // Aggiorna l'orbita sul globo
+            const path = calcOrbitPath(issSatrec);
+            world.pathsData([{ points: path }])
+                 .pathPointLat(d => d.lat).pathPointLng(d => d.lng)
+                 .pathColor(() => '#ffffff').pathDashLength(0.01).pathDashGap(0.005);
+            
+            // Loop aggiornamento ogni secondo
+            setInterval(updateISSPosition, 1000);
+        } catch (e) { console.error("Errore download TLE ISS"); }
+    }
+
+    function updateISSPosition() {
+        if(!issSatrec) return;
+        const now = new Date();
+        const posVel = satellite.propagate(issSatrec, now);
+        const gmst = satellite.gstime(now);
+        const pos = satellite.eciToGeodetic(posVel.position, gmst);
+        
+        const lat = satellite.degreesLat(pos.latitude);
+        const lng = satellite.degreesLong(pos.longitude);
+        const alt = pos.height;
+        const vel = Math.sqrt(Math.pow(posVel.velocity.x, 2) + Math.pow(posVel.velocity.y, 2) + Math.pow(posVel.velocity.z, 2)) * 3600; // km/h
+
+        document.getElementById('iss-alt').textContent = `Alt: ${alt.toFixed(0)} km`;
+        document.getElementById('iss-vel').textContent = `Vel: ${vel.toFixed(0)} km/h`;
+
+        // Punto pulsante bianco sul globo per l'ISS
+        world.ringsData([{ lat: lat, lng: lng }])
+             .ringColor(() => '#ffffff')
+             .ringMaxRadius(3)
+             .ringPropagationSpeed(5)
+             .ringRepeatPeriod(1000);
+        
+        // Centra lentamente la telecamera sull'ISS
+        world.pointOfView({ lat: lat, lng: lng, altitude: 2 }, 1000);
+
+        // Controllo distanza con l'utente (se entro 1000km, mostra l'allarme visibilità)
+        if(userLat && userLon) {
+            const dist = getDistanceFromLatLonInKm(userLat, userLon, lat, lng);
+            document.getElementById('iss-alert').style.display = dist < 1000 ? "block" : "none";
+        }
+    }
+
+    // Formula Haversine per distanza
+    function getDistanceFromLatLonInKm(lat1, lon1, lat2, lon2) {
+      const R = 6371; const dLat = (lat2-lat1)*(Math.PI/180); const dLon = (lon2-lon1)*(Math.PI/180);
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1*(Math.PI/180)) * Math.cos(lat2*(Math.PI/180)) * Math.sin(dLon/2) * Math.sin(dLon/2); 
+      return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+    }
+
+    // --- 5. LANCI SPAZIALI ---
+    let upcomingLaunches = [];
+    async function fetchLaunches() {
+        try {
+            const res = await fetch('https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=3');
+            const data = await res.json();
+            if (!data.results) throw new Error("Rate limit o dati mancanti");
+            upcomingLaunches = data.results;
+            updateLaunchesUI();
+        } catch (e) { 
+            console.error("Errore API lanci", e);
+            document.getElementById('launches-container').innerHTML = '<div class="launch-item">Rate limit API o errore di rete.<br>Riprova più tardi.</div>';
+        }
+    }
+
+    function updateLaunchesUI() {
+        const container = document.getElementById('launches-container');
+        container.innerHTML = '';
+        upcomingLaunches.forEach((launch, index) => {
+            const div = document.createElement('div');
+            div.className = 'launch-item';
+            div.innerHTML = `
+                <div class="launch-agency">${launch.launch_service_provider?.name || 'Agenzia Sconosciuta'}</div>
+                <div class="launch-title">${launch.name.split('|')[0]}</div>
+                <div class="launch-countdown" id="cd-${index}">Calcolo...</div>
+            `;
+            container.appendChild(div);
+        });
+    }
+
+    // Countdown locale per i lanci
+    setInterval(() => {
+        upcomingLaunches.forEach((launch, index) => {
+            const launchDate = new Date(launch.net).getTime();
+            const now = new Date().getTime();
+            const diff = launchDate - now;
+
+            const el = document.getElementById(`cd-${index}`);
+            if(!el) return;
+
+            if (diff < 0) { el.textContent = "IN VOLO / LANCIATO"; return; }
+
+            const d = Math.floor(diff / (1000 * 60 * 60 * 24));
+            const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+            const s = Math.floor((diff % (1000 * 60)) / 1000);
+            
+            el.textContent = `T- ${d}g ${h.toString().padStart(2,'0')}h ${m.toString().padStart(2,'0')}m ${s.toString().padStart(2,'0')}s`;
+        });
+    }, 1000);
+
+    // --- AVVIO APP ---
+    initGlobe();
+    fetchISSData();
+    fetchLaunches();
+    // Aggiorna API dati pesanti ogni 4 ore
+    setInterval(() => { fetchISSData(); fetchLaunches(); }, 1000 * 60 * 60 * 4);
+
+</script>
+</body>
+</html>
