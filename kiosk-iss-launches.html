@@ -145,29 +145,19 @@
     // --- 4. GLOBO 3D MINIMALE & ISS MATH ---
     let world;
     let issSatrec;
-    const TLE_URL = 'https://celestrak.org/NORAD/elements/gp.php?GROUP=stations&FORMAT=tle';
+    const TLE_URL = 'https://api.wheretheiss.at/v1/satellites/25544/tles?format=json';
 
-    // Inizializza il globo bianco e nero
+    // Inizializza il globo
     function initGlobe() {
         const container = document.getElementById('globe-container');
         world = Globe()(container)
+            .globeImageUrl('https://unpkg.com/three-globe/example/img/earth-dark.jpg')
             .backgroundColor('#000000')
             .showAtmosphere(true)
             .atmosphereColor('#ffffff')
             .atmosphereAltitude(0.1)
-            .globeMaterial(new THREE.MeshBasicMaterial({ color: 0x000000 })) // Terra nera
             .width(container.clientWidth)
             .height(container.clientHeight);
-
-        // Carica i confini dei paesi in bianco
-        fetch('https://raw.githubusercontent.com/vasturiano/globe.gl/master/example/datasets/ne_110m_admin_0_countries.geojson')
-            .then(res => res.json())
-            .then(countries => {
-                world.polygonsData(countries.features)
-                    .polygonCapColor(() => '#000000')
-                    .polygonSideColor(() => '#000000')
-                    .polygonStrokeColor(() => '#ffffff');
-            });
     }
 
     // Calcola l'orbita futura (90 minuti)
@@ -188,9 +178,10 @@
     async function fetchISSData() {
         try {
             const response = await fetch(TLE_URL);
-            const text = await response.text();
-            const lines = text.split('\n');
-            const tle1 = lines[1].trim(), tle2 = lines[2].trim(); // Dati della stazione ISS
+            if (!response.ok) throw new Error("TLE API error " + response.status);
+            const data = await response.json();
+            const tle1 = data.line1;
+            const tle2 = data.line2;
             issSatrec = satellite.twoline2satrec(tle1, tle2);
             
             // Aggiorna l'orbita sul globo
@@ -201,7 +192,10 @@
             
             // Loop aggiornamento ogni secondo
             setInterval(updateISSPosition, 1000);
-        } catch (e) { console.error("Errore download TLE ISS"); }
+        } catch (e) { 
+            console.error("Errore download TLE ISS", e); 
+            document.getElementById('iss-alt').textContent = "Errore API";
+        }
     }
 
     function updateISSPosition() {
@@ -248,13 +242,14 @@
     async function fetchLaunches() {
         try {
             const res = await fetch('https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=3');
+            if (!res.ok) throw new Error("HTTP error " + res.status);
             const data = await res.json();
             if (!data.results) throw new Error("Rate limit o dati mancanti");
             upcomingLaunches = data.results;
             updateLaunchesUI();
         } catch (e) { 
             console.error("Errore API lanci", e);
-            document.getElementById('launches-container').innerHTML = '<div class="launch-item">Rate limit API o errore di rete.<br>Riprova più tardi.</div>';
+            document.getElementById('launches-container').innerHTML = '<div class="launch-item" style="color:red">Errore API lanci.<br>Riprova più tardi.</div>';
         }
     }
 
