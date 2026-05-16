@@ -10,6 +10,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/4.1.3/satellite.min.js"></script>
     <script src="https://unpkg.com/three"></script>
     <script src="https://unpkg.com/globe.gl"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.9.0/suncalc.min.js"></script>
 
     <style>
         :root {
@@ -49,24 +50,40 @@
         .pos-side-bottom { top: 51%; left: 68%; width: 30%; height: 47%; }
 
         /* Contenuti interni che scalano */
-        .panel-content { width: 100%; height: 100%; transition: transform var(--transition-speed); }
-        .pos-side-top .panel-content, .pos-side-bottom .panel-content { transform: scale(0.6); transform-origin: top left; }
-        .pos-main .panel-content { transform: scale(1); }
+        .panel-content { 
+            width: 100%; 
+            height: 100%; 
+            transition: transform var(--transition-speed), width var(--transition-speed), height var(--transition-speed); 
+            transform-origin: top left;
+        }
+        /* Manteniamo le proporzioni del layout grande nei riquadri piccoli per evitare word-wrap e cropping, 
+           e poi applichiamo una riduzione visiva. */
+        .pos-side-top .panel-content, .pos-side-bottom .panel-content { 
+            width: 213.33%; /* Compensa 64% / 30% */
+            height: 204.25%; /* Compensa 96% / 47% */
+            transform: scale(0.46875); /* Riduce visivamente 30 / 64 */
+        }
+        .pos-main .panel-content { 
+            width: 100%; 
+            height: 100%;
+            transform: scale(1); 
+        }
 
         /* --- OROLOGIO --- */
-        #clock-time { font-size: 8rem; font-weight: 700; line-height: 1; margin-top: auto; }
-        #clock-date { font-size: 2.5rem; color: var(--dim-text); margin-bottom: auto; }
+        /* Font responsive (clamp e vw) per impedire overflow su schermi piccoli come smartphone */
+        #clock-time { font-size: clamp(2.5rem, 8vw, 8rem); font-weight: 700; line-height: 1; margin-top: auto; }
+        #clock-date { font-size: clamp(0.9rem, 2.5vw, 2.5rem); color: var(--dim-text); margin-bottom: auto; }
 
         /* --- ISS --- */
         #globe-container { width: 100%; flex-grow: 1; cursor: grab; }
-        .iss-stats { font-size: 1.2rem; display: flex; justify-content: space-between; margin-top: 10px; border-top: 1px solid var(--dim-text); padding-top: 10px;}
-        .alert-geo { color: #ffffff; font-weight: bold; font-size: 1.2rem; animation: pulse 2s infinite; display: none; }
+        .iss-stats { font-size: clamp(0.7rem, 1.2vw, 1.2rem); display: flex; justify-content: space-between; margin-top: 10px; border-top: 1px solid var(--dim-text); padding-top: 10px;}
+        .alert-geo { color: #ffffff; font-weight: bold; font-size: clamp(0.8rem, 1.2vw, 1.2rem); animation: pulse 2s infinite; display: none; }
 
         /* --- LANCI --- */
         .launch-item { margin-bottom: 20px; border-left: 2px solid white; padding-left: 10px; }
-        .launch-title { font-size: 1.5rem; font-weight: 700; }
-        .launch-agency { font-size: 1.1rem; color: var(--dim-text); }
-        .launch-countdown { font-size: 2.5rem; font-weight: 500; letter-spacing: 2px; }
+        .launch-title { font-size: clamp(1rem, 1.5vw, 1.5rem); font-weight: 700; }
+        .launch-agency { font-size: clamp(0.8rem, 1vw, 1.1rem); color: var(--dim-text); }
+        .launch-countdown { font-size: clamp(1.2rem, 2.5vw, 2.5rem); font-weight: 500; letter-spacing: 2px; }
 
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
     </style>
@@ -91,6 +108,10 @@
             <div class="iss-stats">
                 <span id="iss-alt">Alt: -- km</span>
                 <span id="iss-vel">Vel: -- km/h</span>
+            </div>
+            <div id="iss-passes" style="margin-top: 15px; border-top: 1px solid var(--dim-text); padding-top: 10px;">
+                <div style="color: var(--dim-text); font-weight: bold; font-size: clamp(0.7rem, 1.2vw, 1.2rem); margin-bottom: 5px;">PROSSIMI PASSAGGI VISIBILI (MACERATA)</div>
+                <div id="passes-container" style="font-size: clamp(0.7rem, 1.2vw, 1.2rem);">Calcolo in corso...</div>
             </div>
             <div id="iss-alert" class="alert-geo">ISS NEL TUO CIELO!</div>
         </div>
@@ -133,18 +154,14 @@
     updateClock();
 
     // --- 3. GEOLOCALIZZAZIONE ---
-    let userLat = null, userLon = null;
-    navigator.geolocation.getCurrentPosition(
-        (pos) => {
-            userLat = pos.coords.latitude; userLon = pos.coords.longitude;
-            document.getElementById('geo-status').textContent = `Posizione Acquisita: ${userLat.toFixed(2)}°, ${userLon.toFixed(2)}°`;
-        },
-        (err) => { document.getElementById('geo-status').textContent = "Permesso posizione negato. Calcolo distanza ISS disabilitato."; }
-    );
+    let userLat = 43.3005, userLon = 13.4533; // Macerata (MC)
+    document.getElementById('geo-status').textContent = `Posizione Acquisita (Macerata): ${userLat.toFixed(2)}°, ${userLon.toFixed(2)}°`;
 
     // --- 4. GLOBO 3D MINIMALE & ISS MATH ---
     let world;
     let issSatrec;
+    let isGlobeCentered = false;
+    let lastPathUpdate = 0;
     const TLE_URL = 'https://api.wheretheiss.at/v1/satellites/25544/tles?format=json';
 
     // Inizializza il globo
@@ -158,20 +175,123 @@
             .atmosphereAltitude(0.1)
             .width(container.clientWidth)
             .height(container.clientHeight);
+
+        // Aggiungi i confini dei paesi per maggior contrasto
+        fetch('https://raw.githubusercontent.com/vasturiano/globe.gl/master/example/datasets/ne_110m_admin_0_countries.geojson')
+            .then(res => res.json())
+            .then(countries => {
+                world.polygonsData(countries.features)
+                     .polygonCapColor(() => 'rgba(0,0,0,0)')
+                     .polygonSideColor(() => 'rgba(0,0,0,0)')
+                     .polygonStrokeColor(() => 'rgba(255,255,255,0.4)');
+            });
     }
 
-    // Calcola l'orbita futura (90 minuti)
+    // Calcola l'orbita passata e futura per creare una scia
     function calcOrbitPath(satrec) {
         const path = [];
         const now = new Date();
-        for(let i=0; i<90; i+=3) { // punti ogni 3 minuti
+        for(let i=-45; i<=90; i+=3) { // da -45 min a +90 min
             const time = new Date(now.getTime() + i*60000);
             const posVel = satellite.propagate(satrec, time);
+            if (!posVel || !posVel.position) continue;
             const gmst = satellite.gstime(time);
             const pos = satellite.eciToGeodetic(posVel.position, gmst);
             path.push({ lat: satellite.degreesLat(pos.latitude), lng: satellite.degreesLong(pos.longitude) });
         }
         return path;
+    }
+
+    // --- 4.5. CALCOLO PASSAGGI VISIBILI (SUNCALC + SATELLITE.JS) ---
+    function getAzimuthStr(azimuthRad) {
+        const deg = azimuthRad * 180 / Math.PI;
+        const norm = (deg + 360) % 360;
+        const compass = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW","N"];
+        return compass[Math.round(norm / 22.5)];
+    }
+
+    function calcVisualPasses(satrec) {
+        const passes = [];
+        const now = new Date();
+        let currentPass = null;
+
+        // Scansione per i prossimi 3 giorni (salti di 1 minuto)
+        for(let i=0; i < 3 * 24 * 60; i++) {
+            const time = new Date(now.getTime() + i * 60000);
+            
+            const posVel = satellite.propagate(satrec, time);
+            if (!posVel || !posVel.position) continue;
+            const gmst = satellite.gstime(time);
+            const positionEcf = satellite.eciToEcf(posVel.position, gmst);
+            
+            const observerEcf = { longitude: userLon * Math.PI / 180, latitude: userLat * Math.PI / 180, height: 0.315 };
+            const lookAngles = satellite.ecfToLookAngles(observerEcf, positionEcf);
+            const elDeg = lookAngles.elevation * 180 / Math.PI;
+            
+            if (elDeg >= 10) {
+                // ISS sopra l'orizzonte
+                const geo = satellite.eciToGeodetic(posVel.position, gmst);
+                const issLat = satellite.degreesLat(geo.latitude);
+                const issLng = satellite.degreesLong(geo.longitude);
+                
+                const sunObs = SunCalc.getPosition(time, userLat, userLon);
+                const sunISS = SunCalc.getPosition(time, issLat, issLng);
+                // Criterio visibilità: notte per noi (< -6°), sole per l'ISS (> -19.8° a 400km)
+                const isVisible = sunObs.altitude < (-6 * Math.PI/180) && sunISS.altitude > (-19.8 * Math.PI/180);
+
+                if (!currentPass) {
+                    currentPass = {
+                        maxEl: elDeg, isVisible: isVisible,
+                        visStart: isVisible ? time : null,
+                        visStartAz: isVisible ? getAzimuthStr(lookAngles.azimuth) : null
+                    };
+                } else {
+                    currentPass.maxEl = Math.max(currentPass.maxEl, elDeg);
+                    if (isVisible && !currentPass.isVisible) {
+                        currentPass.isVisible = true; currentPass.visStart = time; currentPass.visStartAz = getAzimuthStr(lookAngles.azimuth);
+                    }
+                    if (isVisible) {
+                        currentPass.visEnd = time; currentPass.visEndAz = getAzimuthStr(lookAngles.azimuth);
+                    }
+                }
+            } else if (currentPass) {
+                if (currentPass.isVisible && currentPass.visStart && currentPass.visEnd) {
+                    passes.push(currentPass);
+                }
+                currentPass = null;
+                if (passes.length >= 2) break; // Mostriamo solo i prossimi 2 passaggi
+            }
+        }
+        renderPasses(passes);
+    }
+
+    function renderPasses(passes) {
+        const container = document.getElementById('passes-container');
+        if (!passes || passes.length === 0) {
+            container.innerHTML = '<div style="color:var(--dim-text);">Nessun passaggio visibile nei prossimi 3 giorni.</div>';
+            return;
+        }
+        
+        container.innerHTML = '';
+        passes.forEach(p => {
+            const dateStr = p.visStart.toLocaleDateString('it-IT', { month: 'short', day: 'numeric' }).toUpperCase();
+            const timeStr = p.visStart.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+            const duration = Math.round((p.visEnd - p.visStart) / 60000) || 1; // minuti
+            
+            const div = document.createElement('div');
+            div.style.marginBottom = '8px';
+            div.innerHTML = `
+                <div style="display: flex; justify-content: space-between; color: #fff;">
+                    <span><strong>${dateStr}</strong> ${timeStr}</span>
+                    <span style="color: var(--dim-text);">Visibile: ${duration} min</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; color: var(--dim-text); font-size: 0.9em;">
+                    <span>Max Alt: ${p.maxEl.toFixed(0)}°</span>
+                    <span>Da ${p.visStartAz} a ${p.visEndAz}</span>
+                </div>
+            `;
+            container.appendChild(div);
+        });
     }
 
     // Scarica TLE e avvia tracking ISS
@@ -184,14 +304,12 @@
             const tle2 = data.line2;
             issSatrec = satellite.twoline2satrec(tle1, tle2);
             
-            // Aggiorna l'orbita sul globo
-            const path = calcOrbitPath(issSatrec);
-            world.pathsData([{ points: path }])
-                 .pathPointLat(d => d.lat).pathPointLng(d => d.lng)
-                 .pathColor(() => '#ffffff').pathDashLength(0.01).pathDashGap(0.005);
-            
             // Loop aggiornamento ogni secondo
             setInterval(updateISSPosition, 1000);
+            
+            // Calcolo passaggi visibili subito e poi ogni 15 minuti
+            calcVisualPasses(issSatrec);
+            setInterval(() => calcVisualPasses(issSatrec), 15 * 60000);
         } catch (e) { 
             console.error("Errore download TLE ISS", e); 
             document.getElementById('iss-alt').textContent = "Errore API";
@@ -213,6 +331,16 @@
         document.getElementById('iss-alt').textContent = `Alt: ${alt.toFixed(0)} km`;
         document.getElementById('iss-vel').textContent = `Vel: ${vel.toFixed(0)} km/h`;
 
+        // Aggiorna l'orbita periodicamente per mantenere la scia centrata sul tempo attuale
+        if (now.getTime() - lastPathUpdate > 60000) {
+            const path = calcOrbitPath(issSatrec);
+            world.pathsData([{ points: path }])
+                 .pathPoints('points')
+                 .pathPointLat(d => d.lat).pathPointLng(d => d.lng)
+                 .pathColor(() => 'rgba(255, 255, 255, 0.7)'); // Rimosso tratteggio per visibilità e aggiunto pathPoints
+            lastPathUpdate = now.getTime();
+        }
+
         // Punto pulsante bianco sul globo per l'ISS
         world.ringsData([{ lat: lat, lng: lng }])
              .ringColor(() => '#ffffff')
@@ -220,8 +348,11 @@
              .ringPropagationSpeed(5)
              .ringRepeatPeriod(1000);
         
-        // Centra lentamente la telecamera sull'ISS
-        world.pointOfView({ lat: lat, lng: lng, altitude: 2 }, 1000);
+        // Centra lentamente la telecamera sull'ISS solo alla prima acquisizione
+        if (!isGlobeCentered) {
+            world.pointOfView({ lat: lat, lng: lng, altitude: 2 }, 1000);
+            isGlobeCentered = true;
+        }
 
         // Controllo distanza con l'utente (se entro 1000km, mostra l'allarme visibilità)
         if(userLat && userLon) {
