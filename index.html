@@ -276,7 +276,7 @@ html, body {
   <!-- ════════════ CLOCK ════════════ -->
   <div class="section expanded" id="s-clock">
     <div class="cb">
-      <span class="cb-tag">UTC</span>
+      <span class="cb-tag">LOCAL</span>
       <span class="cb-val" id="cb-clock">──:──</span>
     </div>
     <div class="exp">
@@ -340,8 +340,9 @@ html, body {
 </div>
 <div id="pgbar"></div>
 
-<!-- ─── Three.js r128 ──────────────────────── -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- ─── Three.js & Globe.gl ──────────────────── -->
+<script src="https://unpkg.com/three"></script>
+<script src="https://unpkg.com/globe.gl"></script>
 <!-- ─── satellite.js 4.1.4 ─────────────────── -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/4.1.4/satellite.min.js"
         onerror="window.satellite=null"></script>
@@ -381,9 +382,8 @@ let passes   = [];
 // Globe
 let globeInit  = false;
 let rendering  = false;
-let scene, camera, renderer, earthGroup;
-let issMarker, userRing, futureLine, pastLine;
-let tgtRY = 0, tgtRX = 0, curRY = 0, curRX = 0;
+let world;
+let isGlobeCentered = false;
 
 // Launches
 let launches   = [];
@@ -398,13 +398,13 @@ const MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV
 
 function tickClock() {
   const n = new Date();
-  const hh = pad(n.getUTCHours());
-  const mm = pad(n.getUTCMinutes());
-  const ss = pad(n.getUTCSeconds());
+  const hh = pad(n.getHours());
+  const mm = pad(n.getMinutes());
+  const ss = pad(n.getSeconds());
   const lo = n.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',hour12:false});
   setText('clock-hms', `${hh}:${mm}:${ss}`);
   setText('clock-dmy',
-    `${DAYS[n.getDay()]}  ·  ${n.getDate()} ${MONTHS[n.getMonth()]} ${n.getFullYear()}  ·  UTC`);
+    `${DAYS[n.getDay()]}  ·  ${n.getDate()} ${MONTHS[n.getMonth()]} ${n.getFullYear()}`);
   setText('cb-clock', lo);
 }
 setInterval(tickClock, 1000);
@@ -413,35 +413,6 @@ tickClock();
 /* ══════════════════════════════════════════════
    THREE.JS GLOBE
 ══════════════════════════════════════════════ */
-function ll2v(lat, lon, r = 1) {
-  // lat=0,lon=0 → (+x). Camera at +z. lon=90 → +z (front).
-  const phi   = (90 - lat) * Math.PI / 180;
-  const theta = lon * Math.PI / 180;
-  return new THREE.Vector3(
-     r * Math.sin(phi) * Math.cos(theta),
-     r * Math.cos(phi),
-     r * Math.sin(phi) * Math.sin(theta)
-  );
-}
-
-function makeLine(pts, opacity) {
-  const g = new THREE.BufferGeometry().setFromPoints(pts);
-  const m = new THREE.LineBasicMaterial({ color: 0xffffff, opacity, transparent: true });
-  return new THREE.Line(g, m);
-}
-
-function makeLatCircle(lat, r, op) {
-  const pts = [];
-  for (let lo = 0; lo <= 362; lo += 3) pts.push(ll2v(lat, lo, r));
-  return makeLine(pts, op);
-}
-
-function makeLonCircle(lon, r, op) {
-  const pts = [];
-  for (let la = -90; la <= 90; la += 3) pts.push(ll2v(la, lon, r));
-  return makeLine(pts, op);
-}
-
 function initGlobe() {
   if (globeInit) return;
   globeInit = true;
@@ -450,120 +421,86 @@ function initGlobe() {
   const W = wrap.clientWidth  || 360;
   const H = wrap.clientHeight || 300;
 
-  scene    = new THREE.Scene();
-  camera   = new THREE.PerspectiveCamera(36, W / H, 0.1, 100);
-  camera.position.z = 2.85;
+  world = Globe()
+    (wrap)
+    .width(W)
+    .height(H)
+    .globeImageUrl('https://unpkg.com/three-globe/example/img/earth-dark.jpg')
+    .backgroundColor('rgba(0,0,0,0)')
+    .showAtmosphere(true)
+    .atmosphereColor('#4a80ff')
+    .atmosphereAltitude(0.15)
+    .enablePointerInteraction(false);
 
-  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(W, H);
-  renderer.setClearColor(0x000000, 0);
-  wrap.appendChild(renderer.domElement);
+  world.controls().autoRotate = false;
 
-  earthGroup = new THREE.Group();
-  scene.add(earthGroup);
+  fetch('https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson')
+    .then(r => r.json())
+    .then(data => {
+      world.polygonsData(data.features)
+           .polygonCapColor(() => 'rgba(0, 0, 0, 0)')
+           .polygonSideColor(() => 'rgba(0, 0, 0, 0)')
+           .polygonStrokeColor(() => 'rgba(255, 255, 255, 0.35)');
+    });
 
-  // Earth sphere
-  const earthMat = new THREE.MeshBasicMaterial({ color: 0x030303 });
-  earthGroup.add(new THREE.Mesh(
-    new THREE.SphereGeometry(1, 64, 32),
-    earthMat
-  ));
-
-  // Carica la texture della mappa scura per mantenere lo stile sci-fi
-  new THREE.TextureLoader().load('https://unpkg.com/three-globe/example/img/earth-dark.jpg', (tex) => {
-    earthMat.color.setHex(0xaaaaaa); // Tinta leggermente più scura per non accecare
-    earthMat.map = tex;
-    earthMat.needsUpdate = true;
-  });
-
-  // Latitude lines (every 30°, equator brighter)
-  for (let la = -60; la <= 60; la += 30) {
-    earthGroup.add(makeLatCircle(la, 1.002, la === 0 ? 0.20 : 0.09));
-  }
-  // Longitude lines (every 30°)
-  for (let lo = 0; lo < 360; lo += 30) {
-    earthGroup.add(makeLonCircle(lo, 1.002, 0.09));
-  }
-
-  // Ground tracks (empty geometry, filled later)
-  futureLine = makeLine([], 0.65);
-  pastLine   = makeLine([], 0.20);
-  earthGroup.add(futureLine, pastLine);
-
-  // ISS marker — white sphere
-  issMarker = new THREE.Mesh(
-    new THREE.SphereGeometry(0.028, 10, 10),
-    new THREE.MeshBasicMaterial({ color: 0xffffff })
-  );
-  earthGroup.add(issMarker);
-
-  // User location — white ring
-  userRing = new THREE.Mesh(
-    new THREE.TorusGeometry(0.030, 0.007, 6, 28),
-    new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.50, transparent: true })
-  );
-  userRing.visible = false;
-  earthGroup.add(userRing);
-
-  // ResizeObserver for orientation changes
   new ResizeObserver(() => {
-    if (!renderer) return;
-    const w = wrap.clientWidth, h = wrap.clientHeight;
-    if (!w || !h) return;
-    renderer.setSize(w, h);
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
+    const w = wrap.clientWidth;
+    const h = wrap.clientHeight;
+    if (!w || !h || !world) return;
+    world.width(w).height(h);
   }).observe(wrap);
-
-  startRender();
 }
 
 function startRender() {
-  if (rendering) return;
-  rendering = true;
-  drawFrame();
+  if (world) world.resumeAnimation();
 }
-function stopRender() { rendering = false; }
-
-function drawFrame() {
-  if (!rendering) return;
-  requestAnimationFrame(drawFrame);
-  const f = 0.022;
-  curRY += (tgtRY - curRY) * f;
-  curRX += (tgtRX - curRX) * f;
-  earthGroup.rotation.y = curRY;
-  earthGroup.rotation.x = curRX;
-  renderer.render(scene, camera);
+function stopRender() {
+  if (world) world.pauseAnimation();
 }
 
 function placeISS(lat, lon) {
-  if (!globeInit || !issMarker) return;
-  const v = ll2v(lat, lon, 1.055);
-  issMarker.position.copy(v);
-  // Rotate globe so ISS faces camera (camera is at +z, lon=90 is +z in our mapping)
-  tgtRY = -(lon - 90) * Math.PI / 180;
-  tgtRX =  (lat)      * Math.PI / 180 * 0.40;
+  if (!globeInit || !world) return;
+  
+  world.ringsData([{ lat: lat, lng: lon }])
+       .ringColor(() => '#ffffff')
+       .ringMaxRadius(3)
+       .ringPropagationSpeed(5)
+       .ringRepeatPeriod(1000);
+
+  if (!isGlobeCentered) {
+      world.pointOfView({ lat: lat, lng: lon, altitude: 2 }, 1000);
+      isGlobeCentered = true;
+  } else {
+      world.pointOfView({ lat: lat, lng: lon }, 1000);
+  }
 }
 
 function setTrack(futPts, pstPts) {
-  if (!globeInit) return;
+  if (!globeInit || !world) return;
+  const paths = [];
   if (futPts?.length > 1) {
-    futureLine.geometry.setFromPoints(futPts.map(p => ll2v(p.la, p.lo, 1.018)));
-    futureLine.geometry.computeBoundingSphere();
+      paths.push({ points: futPts.map(p => ({ lat: p.la, lng: p.lo })), color: 'rgba(255, 255, 255, 0.65)' });
   }
   if (pstPts?.length > 1) {
-    pastLine.geometry.setFromPoints(pstPts.map(p => ll2v(p.la, p.lo, 1.013)));
-    pastLine.geometry.computeBoundingSphere();
+      paths.push({ points: pstPts.map(p => ({ lat: p.la, lng: p.lo })), color: 'rgba(255, 255, 255, 0.20)' });
   }
+  world.pathsData(paths)
+       .pathPoints('points')
+       .pathPointLat(d => d.lat).pathPointLng(d => d.lng)
+       .pathColor(d => d.color);
 }
 
 function placeUser(lat, lon) {
-  if (!globeInit || !userRing) return;
-  const v = ll2v(lat, lon, 1.035);
-  userRing.position.copy(v);
-  userRing.lookAt(v.clone().multiplyScalar(3));
-  userRing.visible = true;
+  if (!globeInit || !world) return;
+  world.htmlElementsData([{ lat: lat, lng: lon }])
+       .htmlElement(() => {
+           const el = document.createElement('div');
+           el.style.width = '8px'; el.style.height = '8px';
+           el.style.borderRadius = '50%';
+           el.style.border = '2px solid rgba(255,255,255,0.7)';
+           el.style.pointerEvents = 'none';
+           return el;
+       });
 }
 
 /* ══════════════════════════════════════════════
@@ -704,20 +641,18 @@ setInterval(renderPass, 60_000);
    GEOLOCATION
 ══════════════════════════════════════════════ */
 function askGeo() {
-  if (!navigator.geolocation || userLat !== null) return;
-  navigator.geolocation.getCurrentPosition(
-    pos => {
-      userLat = pos.coords.latitude;
-      userLon = pos.coords.longitude;
-      placeUser(userLat, userLon);
-      if (tleData && hasSat) {
-        calcPasses(satellite.twoline2satrec(tleData.line1, tleData.line2));
-      } else {
-        setVal('iss-pass', 'Location acquired — waiting for orbital data…');
-      }
-    },
-    () => setVal('iss-pass', 'Location permission denied')
-  );
+  if (userLat !== null) return;
+  
+  // Hardcoded location for Macerata (MC)
+  userLat = 43.3005;
+  userLon = 13.4533;
+  placeUser(userLat, userLon);
+  
+  if (tleData && hasSat) {
+    calcPasses(satellite.twoline2satrec(tleData.line1, tleData.line2));
+  } else {
+    setVal('iss-pass', 'Location acquired — waiting for orbital data…');
+  }
 }
 
 /* ══════════════════════════════════════════════
